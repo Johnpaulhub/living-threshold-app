@@ -1,0 +1,226 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0" />
+  <title>Living Threshold</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.5/socket.io.min.js"></script>
+  <style>
+    :root {
+      --bg: #07090f;
+      --card: #11151d;
+      --border: #1c2230;
+      --text: #e8eef7;
+      --muted: #8b95a8;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 28px 16px 50px;
+    }
+    h1 { font-size: 1.5rem; font-weight: 650; margin-bottom: 4px; }
+    .tag { font-size: 0.78rem; color: var(--muted); margin-bottom: 28px; }
+    .card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 20px;
+      padding: 26px 22px;
+      width: 100%;
+      max-width: 400px;
+    }
+    .status { font-size: 0.95rem; color: #a5b4c8; margin-bottom: 4px; }
+    .location { font-size: 0.8rem; color: var(--muted); margin-bottom: 20px; }
+    button {
+      width: 100%;
+      padding: 14px;
+      border: none;
+      border-radius: 14px;
+      font-size: 0.97rem;
+      font-weight: 560;
+      cursor: pointer;
+      margin-bottom: 10px;
+    }
+    #btn-scan { background: #1e3a8a; color: #dbeafe; }
+    #btn-join { background: #065f46; color: #d1fae5; }
+    button:disabled { opacity: 0.5; cursor: not-allowed; }
+    .experience {
+      margin-top: 20px;
+      padding-top: 16px;
+      border-top: 1px solid var(--border);
+      text-align: center;
+      font-size: 1.05rem;
+      line-height: 1.5;
+      min-height: 70px;
+    }
+    .experience small { display: block; margin-top: 6px; font-size: 0.82rem; color: var(--muted); }
+    canvas {
+      width: 100%;
+      height: 240px;
+      border-radius: 14px;
+      background: #0a0c12;
+      margin-top: 12px;
+      display: none;
+    }
+    .footer { margin-top: 24px; font-size: 0.72rem; color: #4b5563; text-align: center; }
+  </style>
+</head>
+<body>
+  <h1>THE LIVING THRESHOLD</h1>
+  <div class="tag">Shared presence in public space</div>
+
+  <div class="card">
+    <div class="status" id="status">Connecting…</div>
+    <div class="location" id="location">Waiting for location…</div>
+
+    <button id="btn-scan" onclick="scan()" disabled>Scan for Threshold</button>
+    <button id="btn-join" onclick="joinThreshold()" disabled>Enter Threshold</button>
+
+    <div class="experience" id="experience">
+      Allow location to begin.<br>
+      <small>People nearby can open a threshold together.</small>
+    </div>
+
+    <canvas id="residueCanvas"></canvas>
+  </div>
+
+  <div class="footer">
+    Residues stay tied to this place.<br>
+    Future visitors may feel what happened here.
+  </div>
+
+<script>
+  const socket = io();
+  let myId = null;
+  let currentExp = null;
+  let currentCount = 0;
+  let lat = null, lon = null;
+
+  socket.on("connect", () => {
+    document.getElementById("status").textContent = "Connected";
+  });
+
+  socket.on("connected", (data) => {
+    myId = data.id;
+  });
+
+  socket.on("nearby_update", (data) => {
+    currentCount = data.count;
+    document.getElementById("status").textContent = 
+      data.count > 0 ? `${data.count} people nearby` : "No one else nearby yet";
+  });
+
+  socket.on("scan_result", (data) => {
+    if (data.error) {
+      document.getElementById("experience").innerHTML = data.error;
+      return;
+    }
+    currentExp = data.experience;
+    currentCount = data.count;
+    document.getElementById("btn-scan").disabled = false;
+    document.getElementById("btn-join").disabled = false;
+    document.getElementById("experience").innerHTML = `
+      ${data.count} people nearby<br>
+      <strong>${data.experience.name}</strong><br>
+      <small>Ready when you are</small>
+    `;
+  });
+
+  socket.on("threshold_joined", (data) => {
+    document.getElementById("status").textContent = "Threshold open";
+    document.getElementById("experience").innerHTML = `
+      ${data.experience.name}<br>
+      ${data.people} people<br>
+      <small>Stay present. The threshold is live.</small>
+    `;
+    // Auto-end after short demo time (change later)
+    setTimeout(() => {
+      socket.emit("end_threshold", { people: data.people });
+    }, Math.min(data.experience.duration * 1000, 12000));
+  });
+
+  socket.on("threshold_ended", (data) => {
+    document.getElementById("status").textContent = "Threshold closed";
+    document.getElementById("experience").innerHTML = `
+      ${data.people} people shared this moment<br>
+      <small>Residue left at this place</small>
+    `;
+    document.getElementById("btn-scan").disabled = false;
+    document.getElementById("btn-join").disabled = true;
+    drawResidue(data);
+  });
+
+  function updateLocation(position) {
+    lat = position.coords.latitude;
+    lon = position.coords.longitude;
+    document.getElementById("location").textContent = 
+      `${lat.toFixed(5)}, ${lon.toFixed(5)}`;
+    document.getElementById("btn-scan").disabled = false;
+    socket.emit("update_location", { lat, lon });
+  }
+
+  function locationError() {
+    document.getElementById("location").textContent = "Location permission needed";
+  }
+
+  if (navigator.geolocation) {
+    navigator.geolocation.watchPosition(updateLocation, locationError, {
+      enableHighAccuracy: true,
+      maximumAge: 10000
+    });
+  }
+
+  function scan() {
+    document.getElementById("btn-scan").disabled = true;
+    document.getElementById("experience").innerHTML = "Scanning…";
+    socket.emit("scan", {});
+  }
+
+  function joinThreshold() {
+    if (!currentExp) return;
+    document.getElementById("btn-join").disabled = true;
+    document.getElementById("btn-scan").disabled = true;
+    socket.emit("join_threshold", { experience: currentExp });
+  }
+
+  function drawResidue(data) {
+    const canvas = document.getElementById("residueCanvas");
+    canvas.style.display = "block";
+    const ctx = canvas.getContext("2d");
+    const dpr = window.devicePixelRatio || 1;
+    const w = canvas.offsetWidth;
+    const h = 240;
+    canvas.width = w * dpr;
+    canvas.height = h * dpr;
+    ctx.scale(dpr, dpr);
+
+    ctx.fillStyle = "#080a10";
+    ctx.fillRect(0, 0, w, h);
+
+    let seed = data.seed || 12345;
+    function rnd() {
+      seed = (seed * 16807) % 2147483647;
+      return (seed - 1) / 2147483646;
+    }
+
+    for (let i = 0; i < (data.people || 12); i++) {
+      const x = 20 + rnd() * (w - 40);
+      const y = 20 + rnd() * (h - 40);
+      const r = 7 + rnd() * 18;
+      const g = ctx.createRadialGradient(x, y, 0, x, y, r * 1.6);
+      g.addColorStop(0, `rgba(147, 197, 253, ${0.15 + rnd() * 0.35})`);
+      g.addColorStop(1, "rgba(147,197,253,0)");
+      ctx.fillStyle = g;
+      ctx.beginPath();
+      ctx.arc(x, y, r * 1.6, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+</script>
+</body>
+</html>
