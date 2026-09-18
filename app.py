@@ -9,8 +9,7 @@ from threading import Lock
 
 app = Flask(__name__)
 app.config["SECRET_KEY"] = os.environ.get("SECRET_KEY", "living-threshold-secret-change-me")
-socketio = SocketIO(app, cors_allowed_origins="*", async_mode="eventlet")
-
+socketio = SocketIO(app, cors_allowed_origins="*", async_mode="threading")
 DB_PATH = "threshold.db"
 users = {}
 lock = Lock()
